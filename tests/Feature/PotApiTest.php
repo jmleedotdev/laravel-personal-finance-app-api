@@ -124,3 +124,77 @@ test('returns 422 when a pot field is invalid', function (string $field, mixed $
     'target is zero' => ['target', 0, 'The target field must be greater than 0.'],
     'theme is not a hex color' => ['theme', '#ZZZZZZ', 'The theme must be a color hex code.'],
 ]);
+
+test('returns the requested pot when it belongs to the authenticated user', function () {
+    $user = User::factory()->create();
+    $pot = $user->pots()->forceCreate([
+        'name' => 'Savings',
+        'target' => 2000,
+        'total' => 159,
+        'theme' => '#277C78',
+    ]);
+    $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+    $response = $this->withHeader('Authorization', "Bearer {$token}")
+        ->getJson("/api/pots/{$pot->id}");
+
+    $response->assertOk()->assertExactJson([
+        'id' => $pot->id,
+        'name' => 'Savings',
+        'target' => 2000,
+        'total' => 159,
+        'theme' => '#277C78',
+    ]);
+});
+
+test('returns 404 when showing a pot owned by another user', function () {
+    $user = User::factory()->create();
+    $otherUser = User::factory()->create();
+    $pot = $otherUser->pots()->create([
+        'name' => 'Savings',
+        'target' => 2000,
+        'theme' => '#277C78',
+    ]);
+    $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+    $response = $this->withHeader('Authorization', "Bearer {$token}")
+        ->getJson("/api/pots/{$pot->id}");
+
+    $response->assertNotFound();
+});
+
+test('returns 404 when showing a pot with an unknown UUID', function () {
+    $user = User::factory()->create();
+    $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+    $response = $this->withHeader('Authorization', "Bearer {$token}")
+        ->getJson('/api/pots/52cc790f-a65b-464b-abcc-0b755cf4c8e8');
+
+    $response->assertNotFound();
+});
+
+test('returns 404 with a pot not found message when the ID is not a UUID', function () {
+    $user = User::factory()->create();
+    $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+    $response = $this->withHeader('Authorization', "Bearer {$token}")
+        ->getJson('/api/pots/not-a-uuid');
+
+    $response->assertNotFound()->assertJsonPath('message', 'Pot not found.');
+});
+
+test('returns 401 without a token when showing a pot', function () {
+    $response = $this->getJson('/api/pots/52cc790f-a65b-464b-abcc-0b755cf4c8e8');
+
+    $response->assertUnauthorized();
+});
+
+test('returns 403 when showing a pot without the manage-pots ability', function () {
+    $user = User::factory()->create();
+    $token = $user->createToken('test', ['read-user'])->plainTextToken;
+
+    $response = $this->withHeader('Authorization', "Bearer {$token}")
+        ->getJson('/api/pots/52cc790f-a65b-464b-abcc-0b755cf4c8e8');
+
+    $response->assertForbidden();
+});

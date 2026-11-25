@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class PotController extends Controller
 {
@@ -46,9 +48,13 @@ class PotController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
-        //
+        abort_unless(Str::isUuid($id), 404, 'Pot not found.');
+
+        $pot = $request->user()->pots()->findOrFail($id);
+
+        return response()->json($pot);
     }
 
     /**
