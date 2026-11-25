@@ -21,7 +21,7 @@ test('the transactions endpoint returns transactions fields', function () {
         'amount' => -15.49,
         'recurring' => true,
     ]);
-    $token = $user->createToken('test', ['demo:read'])->plainTextToken;
+    $token = $user->createToken('test', ['manage-transactions'])->plainTextToken;
 
     $this->withHeader('Authorization', "Bearer {$token}")
         ->getJson('/api/transactions')

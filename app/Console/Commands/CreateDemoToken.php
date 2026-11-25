@@ -24,7 +24,7 @@ class CreateDemoToken extends Command
             return self::FAILURE;
         }
 
-        $token = $user->createToken((string) $this->argument('name'), ['demo:read']);
+        $token = $user->createToken((string) $this->argument('name'), ['read-user', 'manage-transactions', 'manage-budgets', 'manage-pots']);
 
         $this->info('Generated token:');
         $this->line($token->plainTextToken);

@@ -18,7 +18,7 @@ test('the budgets endpoint returns budgets fields', function () {
         'maximum' => 50,
         'theme' => '#277C78',
     ]);
-    $token = $user->createToken('test', ['demo:read'])->plainTextToken;
+    $token = $user->createToken('test', ['manage-budgets'])->plainTextToken;
 
     $this->withHeader('Authorization', "Bearer {$token}")
         ->getJson('/api/budgets')

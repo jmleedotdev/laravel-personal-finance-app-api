@@ -13,7 +13,7 @@ test('the user endpoint returns 401 json without a token or accept header', func
 
 test('the user endpoint returns the token owner and balance fields', function () {
     $user = User::factory()->create();
-    $token = $user->createToken('test', ['demo:read'])->plainTextToken;
+    $token = $user->createToken('test', ['read-user'])->plainTextToken;
 
     $this->withHeader('Authorization', "Bearer {$token}")
         ->getJson('/api/user')
