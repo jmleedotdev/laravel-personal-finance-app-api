@@ -18,6 +18,13 @@ class Pot extends Model
         'total' => 0,
     ];
 
+    protected function casts(): array {
+        return [
+            'target' => 'decimal:2',
+            'total' => 'decimal:2',
+        ];
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

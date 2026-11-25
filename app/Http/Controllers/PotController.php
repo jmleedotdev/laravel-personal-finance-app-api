@@ -2,12 +2,19 @@
 
 namespace App\Http\Controllers;
 
+use Brick\Math\BigDecimal;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 class PotController extends Controller
 {
+    private function verifyUuid(string $id): void {
+        abort_unless(Str::isUuid($id), 404, 'Pot not found.');
+    }
+
     /**
      * Display a listing of the resource.
      */
@@ -50,7 +57,7 @@ class PotController extends Controller
      */
     public function show(Request $request, string $id)
     {
-        abort_unless(Str::isUuid($id), 404, 'Pot not found.');
+        $this->verifyUuid($id);
 
         $pot = $request->user()->pots()->findOrFail($id);
 
@@ -68,8 +75,37 @@ class PotController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
-        //
+        $this->verifyUuid($id);
+
+        $user = $request->user();
+
+        DB::transaction(function () use ($user, $id): void {
+            $pot = $user->pots()->lockForUpdate()->findOrFail($id);
+            $total = BigDecimal::of($pot->total);
+
+            if (!$total->isZero()) {
+                $balance = $user->balance()->lockForUpdate()->first();
+
+                abort_if($balance === null, 409, 'No current balance to return the pot funds to.');
+
+                $newCurrent = BigDecimal::of($balance->current)->plus($total);
+
+                abort_if($newCurrent->isGreaterThan('999999.99'), 409, 'Returning the pot funds would exceed the balance limit.');
+
+                $balance->current = (string) $newCurrent;
+
+                if (!$balance->save()) {
+                    throw new RuntimeException('Could not save the updated balance.');
+                }
+            }
+
+            if (!$pot->delete()) {
+                throw new RuntimeException('Could not delete the pot.');
+            }
+        });
+
+        return response()->noContent();
     }
 }

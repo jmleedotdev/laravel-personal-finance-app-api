@@ -1,7 +1,9 @@
 <?php
 
+use App\Models\Pot;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Event;
 
 uses(RefreshDatabase::class);
 
@@ -45,8 +47,8 @@ test('creates a pot owned by the authenticated user with a zero starting total',
     $response->assertCreated()
         ->assertJsonStructure(['id', 'name', 'target', 'total', 'theme'])
         ->assertJsonPath('name', 'Test Pot')
-        ->assertJsonPath('target', 20.5)
-        ->assertJsonPath('total', 0)
+        ->assertJsonPath('target', '20.50')
+        ->assertJsonPath('total', '0.00')
         ->assertJsonPath('theme', '#277C46');
 
     $this->assertDatabaseHas('pots', [
@@ -141,8 +143,8 @@ test('returns the requested pot when it belongs to the authenticated user', func
     $response->assertOk()->assertExactJson([
         'id' => $pot->id,
         'name' => 'Savings',
-        'target' => 2000,
-        'total' => 159,
+        'target' => '2000.00',
+        'total' => '159.00',
         'theme' => '#277C78',
     ]);
 });
@@ -197,4 +199,105 @@ test('returns 403 when showing a pot without the manage-pots ability', function 
         ->getJson('/api/pots/52cc790f-a65b-464b-abcc-0b755cf4c8e8');
 
     $response->assertForbidden();
+});
+
+describe('deleting a pot', function () {
+    test('returns 204 and moves the exact pot total to the current balance', function () {
+        $user = User::factory()->create();
+        $balance = $user->balance()->forceCreate(['current' => '10.10', 'income' => '20.00', 'expenses' => '4.00']);
+        $pot = $user->pots()->forceCreate(['name' => 'Savings', 'target' => 100, 'total' => '0.20', 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->deleteJson("/api/pots/{$pot->id}");
+
+        $response->assertNoContent();
+        $this->assertModelMissing($pot);
+        $this->assertDatabaseHas('balances', [
+            'id' => $balance->id,
+            'current' => '10.30',
+            'income' => '20.00',
+            'expenses' => '4.00',
+        ]);
+    });
+
+    test('returns 204 and deletes an empty pot even when there is no balance', function () {
+        $user = User::factory()->create();
+        $pot = $user->pots()->create(['name' => 'Savings', 'target' => 100, 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->deleteJson("/api/pots/{$pot->id}");
+
+        $response->assertNoContent();
+        $this->assertModelMissing($pot);
+        $this->assertDatabaseCount('balances', 0);
+    });
+
+    test('returns 409 and keeps a funded pot when there is no balance', function () {
+        $user = User::factory()->create();
+        $pot = $user->pots()->forceCreate(['name' => 'Savings', 'target' => 100, 'total' => '25.50', 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->deleteJson("/api/pots/{$pot->id}");
+
+        $response->assertConflict()->assertJsonPath('message', 'No current balance to return the pot funds to.');
+        $this->assertDatabaseHas('pots', ['id' => $pot->id, 'total' => '25.50']);
+        $this->assertDatabaseCount('balances', 0);
+    });
+
+    test('returns 409 and keeps both amounts unchanged when the refund would exceed the balance limit', function () {
+        $user = User::factory()->create();
+        $balance = $user->balance()->forceCreate(['current' => '999999.90', 'income' => '0.00', 'expenses' => '0.00']);
+        $pot = $user->pots()->forceCreate(['name' => 'Savings', 'target' => 100, 'total' => '0.10', 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->deleteJson("/api/pots/{$pot->id}");
+
+        $response->assertConflict()->assertJsonPath('message', 'Returning the pot funds would exceed the balance limit.');
+        $this->assertDatabaseHas('pots', ['id' => $pot->id, 'total' => '0.10']);
+        $this->assertDatabaseHas('balances', ['id' => $balance->id, 'current' => '999999.90']);
+    });
+
+    test('returns 500 and rolls back the refund when the pot cannot be deleted', function () {
+        $user = User::factory()->create();
+        $balance = $user->balance()->forceCreate(['current' => '10.10', 'income' => '20.00', 'expenses' => '4.00']);
+        $pot = $user->pots()->forceCreate(['name' => 'Savings', 'target' => 100, 'total' => '0.20', 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+        Event::listen('eloquent.deleting: '.Pot::class, fn (): bool => false);
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->deleteJson("/api/pots/{$pot->id}");
+
+        $response->assertInternalServerError();
+        $this->assertDatabaseHas('pots', ['id' => $pot->id, 'total' => '0.20']);
+        $this->assertDatabaseHas('balances', ['id' => $balance->id, 'current' => '10.10']);
+    });
+
+    test('returns 404 and leaves another user’s pot intact', function () {
+        $user = User::factory()->create();
+        $otherUser = User::factory()->create();
+        $pot = $otherUser->pots()->create(['name' => 'Savings', 'target' => 100, 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->deleteJson("/api/pots/{$pot->id}");
+
+        $response->assertNotFound();
+        $this->assertModelExists($pot);
+    });
+
+    test('returns 403 and keeps the pot when the token lacks the manage-pots ability', function () {
+        $user = User::factory()->create();
+        $pot = $user->pots()->create(['name' => 'Savings', 'target' => 100, 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['read-user'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->deleteJson("/api/pots/{$pot->id}");
+
+        $response->assertForbidden();
+        $this->assertModelExists($pot);
+    });
 });
