@@ -175,15 +175,20 @@ test('returns 404 when showing a pot with an unknown UUID', function () {
     $response->assertNotFound();
 });
 
-test('returns 404 with a pot not found message when the ID is not a UUID', function () {
+test('returns 404 for a malformed pot UUID before validating the request body', function (string $method, array $payload) {
     $user = User::factory()->create();
     $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
 
     $response = $this->withHeader('Authorization', "Bearer {$token}")
-        ->getJson('/api/pots/not-a-uuid');
+        ->json($method, '/api/pots/not-a-uuid', $payload);
 
-    $response->assertNotFound()->assertJsonPath('message', 'Pot not found.');
-});
+    $response->assertNotFound();
+})->with([
+    'GET' => ['GET', []],
+    'PUT with an invalid target' => ['PUT', ['target' => -1]],
+    'PATCH with an invalid target' => ['PATCH', ['target' => -1]],
+    'DELETE' => ['DELETE', []],
+]);
 
 test('returns 401 without a token when showing a pot', function () {
     $response = $this->getJson('/api/pots/52cc790f-a65b-464b-abcc-0b755cf4c8e8');

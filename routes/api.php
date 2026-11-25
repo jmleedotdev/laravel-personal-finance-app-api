@@ -12,4 +12,14 @@ Route::apiResource('transactions', TransactionController::class)->middleware(['a
 
 Route::apiResource('budgets', BudgetController::class)->middleware(['auth:sanctum', 'ability:manage-budgets']);
 
-Route::apiResource('pots', PotController::class)->middleware(['auth:sanctum', 'ability:manage-pots']);
+Route::middleware(['auth:sanctum', 'ability:manage-pots'])
+    ->controller(PotController::class)
+    ->prefix('pots')
+    ->name('pots.')
+    ->group(function () {
+        Route::get('/', 'index')->name('index');
+        Route::post('/', 'store')->name('store');
+        Route::get('/{pot}', 'show')->whereUuid('pot')->name('show');
+        Route::match(['put', 'patch'], '/{pot}', 'update')->whereUuid('pot')->name('update');
+        Route::delete('/{pot}', 'destroy')->whereUuid('pot')->name('destroy');
+    });
