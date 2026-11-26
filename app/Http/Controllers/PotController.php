@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\SavePotRequest;
 use Brick\Math\BigDecimal;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -91,5 +92,76 @@ class PotController extends Controller
         });
 
         return response()->noContent();
+    }
+
+    public function deposit(SavePotRequest $request, string $id): JsonResponse {
+        $user = $request->user();
+        $amount = BigDecimal::of((string) $request->validated('amount'));
+
+        return DB::transaction(function () use ($user, $amount, $id): JsonResponse {
+            $pot = $user->pots()->lockForUpdate()->findOrFail($id);
+            $balance = $user->balance()->lockForUpdate()->first();
+
+            abort_if($balance === null, 409, 'No current balance available to deposit the pot.');
+
+            $current = BigDecimal::of($balance->current);
+
+            abort_if($amount->isGreaterThan($current), 409, 'Amount cannot be greater than current balance.');
+
+            $newCurrent = $current->minus($amount);
+            $balance->current = (string) $newCurrent;
+
+            if (! $balance->save()) {
+                throw new RuntimeException('Could not save the updated balance.');
+            }
+
+            $newTotal = BigDecimal::of($pot->total)->plus($amount);
+
+            abort_if($newTotal->isGreaterThan('999999.99'), 409, 'This amount would exceed the pot total limit.');
+
+            $pot->total = (string) $newTotal;
+
+            if (! $pot->save()) {
+                throw new RuntimeException('Could not save the updated pot total.');
+            }
+
+            return response()->json($pot);
+        });
+    }
+
+    public function withdraw(SavePotRequest $request, string $id): JsonResponse {
+        $user = $request->user();
+        $amount = BigDecimal::of((string) $request->validated('amount'));
+
+        return DB::transaction(function () use ($user, $amount, $id): JsonResponse {
+            $pot = $user->pots()->lockForUpdate()->findOrFail($id);
+            $balance = $user->balance()->lockForUpdate()->first();
+
+            abort_if($balance === null, 409, 'No current balance available to receive the pot withdrawal.');
+
+            $total = BigDecimal::of($pot->total);
+
+            abort_if($amount->isGreaterThan($total), 409, 'Amount cannot be greater than pot total.');
+
+            $current = BigDecimal::of($balance->current);
+            $newCurrent = $current->plus($amount);
+
+            abort_if($newCurrent->isGreaterThan('999999.99'), 409, 'The latest current balance would exceed the current balance limit.');
+
+            $balance->current = (string) $newCurrent;
+
+            if (! $balance->save()) {
+                throw new RuntimeException('Could not save the updated balance.');
+            }
+
+            $total = BigDecimal::of($pot->total)->minus($amount);
+            $pot->total = (string) $total;
+
+            if (! $pot->save()) {
+                throw new RuntimeException('Could not save the updated pot total.');
+            }
+
+            return response()->json($pot);
+        });
     }
 }

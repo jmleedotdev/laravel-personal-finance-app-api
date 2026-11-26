@@ -22,4 +22,6 @@ Route::middleware(['auth:sanctum', 'ability:manage-pots'])
         Route::get('/{pot}', 'show')->whereUuid('pot')->name('show');
         Route::match(['put', 'patch'], '/{pot}', 'update')->whereUuid('pot')->name('update');
         Route::delete('/{pot}', 'destroy')->whereUuid('pot')->name('destroy');
+        Route::post( '/{pot}/deposit', 'deposit')->whereUuid('pot')->name('deposit');
+        Route::post('/{pot}/withdraw', 'withdraw')->whereUuid('pot')->name('withdraw');
     });

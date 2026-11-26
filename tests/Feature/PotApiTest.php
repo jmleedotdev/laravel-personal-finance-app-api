@@ -306,3 +306,127 @@ describe('deleting a pot', function () {
         $this->assertModelExists($pot);
     });
 });
+
+describe('transferring pot funds', function () {
+    test('moves the exact amount between the pot and current balance', function (string $operation, float|string $amount, string $expectedCurrent, string $expectedTotal) {
+        $user = User::factory()->create();
+        $balance = $user->balance()->forceCreate(['current' => '10.10', 'income' => '20.00', 'expenses' => '4.00']);
+        $pot = $user->pots()->forceCreate(['name' => 'Savings', 'target' => 100, 'total' => '0.30', 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->postJson("/api/pots/{$pot->id}/{$operation}", ['amount' => $amount]);
+
+        $response->assertOk()
+            ->assertJsonPath('id', $pot->id)
+            ->assertJsonPath('total', $expectedTotal);
+        $this->assertDatabaseHas('pots', ['id' => $pot->id, 'total' => $expectedTotal]);
+        $this->assertDatabaseHas('balances', [
+            'id' => $balance->id,
+            'current' => $expectedCurrent,
+            'income' => '20.00',
+            'expenses' => '4.00',
+        ]);
+    })->with([
+        'deposit a JSON number' => ['deposit', 0.2, '9.90', '0.50'],
+        'withdraw the entire pot using a decimal string' => ['withdraw', '0.30', '10.40', '0.00'],
+    ]);
+
+    test('returns 409 without moving funds when the source is insufficient or the destination would overflow', function (string $operation, string $current, string $total, string $amount, string $message) {
+        $user = User::factory()->create();
+        $balance = $user->balance()->forceCreate(['current' => $current, 'income' => '0.00', 'expenses' => '0.00']);
+        $pot = $user->pots()->forceCreate(['name' => 'Savings', 'target' => 100, 'total' => $total, 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->postJson("/api/pots/{$pot->id}/{$operation}", ['amount' => $amount]);
+
+        $response->assertConflict()->assertJsonPath('message', $message);
+        $this->assertDatabaseHas('pots', ['id' => $pot->id, 'total' => $total]);
+        $this->assertDatabaseHas('balances', ['id' => $balance->id, 'current' => $current]);
+    })->with([
+        'deposit exceeds current balance' => ['deposit', '0.10', '5.00', '0.11', 'Amount cannot be greater than current balance.'],
+        'withdrawal exceeds the pot total' => ['withdraw', '5.00', '0.10', '0.11', 'Amount cannot be greater than pot total.'],
+        'deposit would overflow the pot' => ['deposit', '5.00', '999999.90', '0.10', 'This amount would exceed the pot total limit.'],
+        'withdrawal would overflow the balance' => ['withdraw', '999999.90', '5.00', '0.10', 'The latest current balance would exceed the current balance limit.'],
+    ]);
+
+    test('returns 409 and leaves the pot unchanged when no balance exists', function (string $operation, string $message) {
+        $user = User::factory()->create();
+        $pot = $user->pots()->forceCreate(['name' => 'Savings', 'target' => 100, 'total' => '0.30', 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->postJson("/api/pots/{$pot->id}/{$operation}", ['amount' => '0.20']);
+
+        $response->assertConflict()->assertJsonPath('message', $message);
+        $this->assertDatabaseHas('pots', ['id' => $pot->id, 'total' => '0.30']);
+        $this->assertDatabaseCount('balances', 0);
+    })->with([
+        'deposit' => ['deposit', 'No current balance available to deposit the pot.'],
+        'withdraw' => ['withdraw', 'No current balance available to receive the pot withdrawal.'],
+    ]);
+
+    test('returns 500 and rolls back the balance change when saving the pot fails', function (string $operation) {
+        $user = User::factory()->create();
+        $balance = $user->balance()->forceCreate(['current' => '10.10', 'income' => '20.00', 'expenses' => '4.00']);
+        $pot = $user->pots()->forceCreate(['name' => 'Savings', 'target' => 100, 'total' => '0.30', 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+        Event::listen('eloquent.updating: '.Pot::class, fn (): bool => false);
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->postJson("/api/pots/{$pot->id}/{$operation}", ['amount' => '0.20']);
+
+        $response->assertInternalServerError();
+        $this->assertDatabaseHas('pots', ['id' => $pot->id, 'total' => '0.30']);
+        $this->assertDatabaseHas('balances', ['id' => $balance->id, 'current' => '10.10']);
+    })->with(['deposit', 'withdraw']);
+
+    test('returns 422 and leaves both amounts unchanged when the amount is invalid', function (string $operation, array $payload, string $message) {
+        $user = User::factory()->create();
+        $balance = $user->balance()->forceCreate(['current' => '10.10', 'income' => '20.00', 'expenses' => '4.00']);
+        $pot = $user->pots()->forceCreate(['name' => 'Savings', 'target' => 100, 'total' => '0.30', 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->postJson("/api/pots/{$pot->id}/{$operation}", $payload);
+
+        $response->assertUnprocessable()->assertJsonPath('errors.amount.0', $message);
+        $this->assertDatabaseHas('pots', ['id' => $pot->id, 'total' => '0.30']);
+        $this->assertDatabaseHas('balances', ['id' => $balance->id, 'current' => '10.10']);
+    })->with(['deposit', 'withdraw'])->with([
+        'missing amount' => [[], 'The amount field is required.'],
+        'non-numeric amount' => [['amount' => 'abc'], 'The amount field must be a number.'],
+        'zero amount' => [['amount' => 0], 'The amount field must be greater than 0.'],
+        'too many decimal places' => [['amount' => 0.205], 'The amount field must have 0-2 decimal places.'],
+    ]);
+
+    test('returns 404 and does not transfer funds when the pot belongs to someone else', function (string $operation) {
+        $user = User::factory()->create();
+        $otherUser = User::factory()->create();
+        $balance = $user->balance()->forceCreate(['current' => '10.10', 'income' => '20.00', 'expenses' => '4.00']);
+        $pot = $otherUser->pots()->forceCreate(['name' => 'Savings', 'target' => 100, 'total' => '0.30', 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['manage-pots'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->postJson("/api/pots/{$pot->id}/{$operation}", ['amount' => '0.20']);
+
+        $response->assertNotFound();
+        $this->assertDatabaseHas('pots', ['id' => $pot->id, 'total' => '0.30']);
+        $this->assertDatabaseHas('balances', ['id' => $balance->id, 'current' => '10.10']);
+    })->with(['deposit', 'withdraw']);
+
+    test('returns 403 and does not transfer funds without the manage-pots ability', function (string $operation) {
+        $user = User::factory()->create();
+        $balance = $user->balance()->forceCreate(['current' => '10.10', 'income' => '20.00', 'expenses' => '4.00']);
+        $pot = $user->pots()->forceCreate(['name' => 'Savings', 'target' => 100, 'total' => '0.30', 'theme' => '#277C78']);
+        $token = $user->createToken('test', ['read-user'])->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->postJson("/api/pots/{$pot->id}/{$operation}", ['amount' => '0.20']);
+
+        $response->assertForbidden();
+        $this->assertDatabaseHas('pots', ['id' => $pot->id, 'total' => '0.30']);
+        $this->assertDatabaseHas('balances', ['id' => $balance->id, 'current' => '10.10']);
+    })->with(['deposit', 'withdraw']);
+});

@@ -22,6 +22,12 @@ class SavePotRequest extends FormRequest
      */
     public function rules(): array
     {
+        if ($this->routeIs('pots.deposit', 'pots.withdraw')) {
+            return [
+                'amount' => ['required', 'numeric', 'decimal:0,2', 'gt:0'],
+            ];
+        }
+
         $requiredOrSometimes = $this->isMethod('POST')
             ? ['required']
             : ['sometimes', 'required'];
