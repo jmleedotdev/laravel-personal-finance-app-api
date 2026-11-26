@@ -2,51 +2,65 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\ListTransactionsRequest;
 use Illuminate\Http\Request;
+use LogicException;
 
 class TransactionController extends Controller
 {
     /**
      * Display a listing of the resource.
      */
-    public function index(Request $request)
-    {
-        return $request->user()
-            ->transactions()
-            ->orderByDesc('date')
-            ->orderByDesc('id')
-            ->paginate(10);
+    private function getSorting(string $sort) {
+        $sortMap = [
+            'latest' => ['date', 'desc'],
+            'oldest' => ['date', 'asc'],
+            'a to z' => ['name', 'asc'],
+            'z to a' => ['name','desc'],
+            'highest' => ['amount', 'desc'],
+            'lowest' => ['amount', 'asc']
+        ];
+
+        if (! isset($sortMap[$sort])) {
+            throw new LogicException("No sort mapping for [$sort].");
+        }
+
+        return $sortMap[$sort];
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
+    public function index(ListTransactionsRequest $request)
     {
-        //
+        $filters = $request->validated();
+        $search = $filters['search'] ?? null;
+        $sort = $filters['sort'] ?? null;
+        $category = $filters['category'] ?? null;
+        $transactions = $request->user()->transactions();
+
+        if ($search !== null) {
+            $transactions->where('name', 'like', "%{$search}%");
+        }
+
+        if ($category !== null) {
+            $transactions->where('category', $category);
+        }
+
+        if ($sort) {
+            [$column, $ordering] = $this->getSorting($sort);
+            $transactions->orderBy($column, $ordering)->orderByDesc('id');
+        } else {
+            $transactions->orderByDesc('date')->orderByDesc('id');
+        }
+
+        return $transactions->paginate(10)->withQueryString();
     }
 
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
-        //
-    }
+        $transaction = $request->user()->transactions()->findOrFail($id);
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
+        return response()->json($transaction);
     }
 }

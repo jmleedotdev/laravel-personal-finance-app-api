@@ -9,7 +9,14 @@ use Illuminate\Support\Facades\Route;
 Route::get('/user', UserController::class)->middleware(['auth:sanctum', 'ability:read-user']);
 
 // Transactions
-Route::apiResource('transactions', TransactionController::class)->middleware(['auth:sanctum', 'ability:manage-transactions']);
+Route::middleware(['auth:sanctum', 'ability:manage-transactions'])
+    ->controller(TransactionController::class)
+    ->prefix('transactions')
+    ->name('transactions.')
+    ->group(function () {
+        Route::get('/', 'index')->name('index');
+        Route::get('/{transaction}', 'show')->whereUuid('transaction')->name('show');
+    });
 
 // Budgets
 Route::middleware(['auth:sanctum', 'ability:manage-budgets'])

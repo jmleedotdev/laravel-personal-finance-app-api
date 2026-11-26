@@ -15,6 +15,7 @@ class Transaction extends Model
     protected function casts(): array {
         return [
             'date' => 'datetime',
+            'amount' => 'decimal:2',
             'recurring' => 'boolean',
         ];
     }
