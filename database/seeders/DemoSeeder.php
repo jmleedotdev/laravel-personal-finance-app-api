@@ -8,6 +8,7 @@ use App\Models\Category;
 use App\Models\Pot;
 use App\Models\Transaction;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -600,6 +601,12 @@ class DemoSeeder extends Seeder
                 'recurring' => false,
             ],
         ];
+
+        foreach ($transactions as $index => $transaction) {
+            $transactions[$index]['date'] = Carbon::parse($transaction['date'])
+                ->utc()
+                ->toDateTimeString();
+        }
 
         Transaction::upsert($transactions, ['id'], ['avatar', 'name', 'category', 'date', 'amount', 'recurring']);
 
